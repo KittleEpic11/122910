@@ -1,135 +1,115 @@
--- LocalScript (Place in StarterPlayerScripts)
+-- LocalScript (MUST be in StarterPlayerScripts)
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
-local mouse = player:GetMouse()
 local camera = workspace.CurrentCamera
-
 local lockedTarget = nil
-local maxLockDistance = 1000
 local lockHighlight = nil
-local connection = nil
 
--- Debug print function
-local function debugPrint(message)
-    print("[LockSystem] " .. message)
-    
- game.StarterGui:SetCore("ChatMakeSystemMessage", {Text = "[LockSystem] "..message})
+-- Configuration
+local MAX_LOCK_DISTANCE = 10000
+local LOCK_ANGLE_THRESHOLD = math.cos(math.rad(30)) -- 30 degree cone
+
+-- Set camera to be controllable
+camera.CameraType = Enum.CameraType.Scriptable
+
+local function getLocalRoot()
+    return player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+end
+
+local function isValidTarget(target)
+    return target and target:IsDescendantOf(workspace) 
+        and target:FindFirstChild("HumanoidRootPart")
+        and target.Humanoid.Health > 0
 end
 
 local function findNearestEnemy()
-    if not player.Character then
-        debugPrint("No character found")
-        return nil
-    end
-    
-    local localRoot = player.Character:FindFirstChild("HumanoidRootPart")
-    if not localRoot then
-        debugPrint("No HumanoidRootPart found")
-        return nil
-    end
+    local localRoot = getLocalRoot()
+    if not localRoot then return end
 
-    local closest = nil
-    local closestDistance = maxLockDistance
+    local bestTarget = nil
+    local bestScore = 0
     local localPosition = localRoot.Position
+    local localCFrame = localRoot.CFrame
 
     for _, otherPlayer in ipairs(Players:GetPlayers()) do
-        if otherPlayer ~= player then
-            -- Team check (works with NeutralTeam)
-            if player.Neutral or otherPlayer.Neutral or otherPlayer.Team ~= player.Team then
-                local character = otherPlayer.Character
-                if character then
-                    local enemyRoot = character:FindFirstChild("HumanoidRootPart")
-                    if enemyRoot then
-                        local distance = (enemyRoot.Position - localPosition).Magnitude
-                        if distance < closestDistance then
-                            closest = character
-                            closestDistance = distance
-                        end
+        if otherPlayer ~= player and (player.Neutral or otherPlayer.Neutral or otherPlayer.Team ~= player.Team) then
+            local character = otherPlayer.Character
+            if isValidTarget(character) then
+                local targetRoot = character.HumanoidRootPart
+                local toTarget = targetRoot.Position - localPosition
+                local distance = toTarget.Magnitude
+                
+                if distance <= MAX_LOCK_DISTANCE then
+                    local direction = toTarget.Unit
+                    local viewAngle = localCFrame.LookVector:Dot(direction)
+                    
+                    -- Prioritize targets in view direction
+                    local score = viewAngle * (1 - distance/MAX_LOCK_DISTANCE)
+                    
+                    if viewAngle > LOCK_ANGLE_THRESHOLD and score > bestScore then
+                        bestTarget = character
+                        bestScore = score
                     end
                 end
             end
         end
     end
-
-    debugPrint("Closest target: " .. (closest and closest.Name or "None"))
-    return closest
-end
-
-local function createLockHighlight(target)
-    if lockHighlight then
-        lockHighlight:Destroy()
-    end
     
-    lockHighlight = Instance.new("Highlight")
-    lockHighlight.Name = "LockOnHighlight"
-    lockHighlight.FillColor = Color3.new(1, 0, 0)
-    lockHighlight.OutlineColor = Color3.new(1, 1, 0)
-    lockHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    lockHighlight.Parent = target
-    debugPrint("Created highlight on " .. target.Name)
+    return bestTarget
 end
 
 local function updateLock()
-    if not lockedTarget or not lockedTarget.Parent then
-        debugPrint("Lost target (destroyed)")
-        lockedTarget = nil
-        return
-    end
-    
-    local humanoid = lockedTarget:FindFirstChild("Humanoid")
-    local rootPart = lockedTarget:FindFirstChild("HumanoidRootPart")
-    local localRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-    
-    if not humanoid or humanoid.Health <= 0 or not rootPart or not localRoot then
-        debugPrint("Lost target (invalid)")
+    if not lockedTarget or not isValidTarget(lockedTarget) then
+        if lockHighlight then
+            lockHighlight:Destroy()
+            lockHighlight = nil
+        end
         lockedTarget = nil
         return
     end
 
-    -- Smooth camera tracking
-    camera.CFrame = CFrame.new(camera.CFrame.Position, rootPart.Position)
+    -- Smooth camera follow
+    local targetPosition = lockedTarget.HumanoidRootPart.Position
+    local currentPosition = camera.CFrame.Position
+    camera.CFrame = CFrame.new(currentPosition, targetPosition)
+    
+    -- Update highlight
+    if not lockHighlight then
+        lockHighlight = Instance.new("Highlight")
+        lockHighlight.FillColor = Color3.new(1, 0, 0)
+        lockHighlight.OutlineColor = Color3.new(1, 1, 0)
+        lockHighlight.Parent = lockedTarget
+    end
 end
 
-mouse.Button2Down:Connect(function()
-    debugPrint("Right mouse down")
-    lockedTarget = findNearestEnemy()
-    
-    if lockedTarget then
-        createLockHighlight(lockedTarget)
-        connection = RunService.Heartbeat:Connect(function()
-            if not lockedTarget then
-                connection:Disconnect()
-                debugPrint("Disconnected heartbeat")
-                return
-            end
-            updateLock()
-        end)
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 and not gameProcessed then
+        lockedTarget = findNearestEnemy()
+        if lockedTarget then
+            RunService:BindToRenderStep("LockOnUpdate", Enum.RenderPriority.Camera.Value, updateLock)
+        end
     end
 end)
 
-mouse.Button2Up:Connect(function()
-    debugPrint("Right mouse up")
-    lockedTarget = nil
-    if lockHighlight then
-        lockHighlight:Destroy()
-        lockHighlight = nil
-    end
-    if connection then
-        connection:Disconnect()
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        RunService:UnbindFromRenderStep("LockOnUpdate")
+        if lockHighlight then
+            lockHighlight:Destroy()
+            lockHighlight = nil
+        end
+        lockedTarget = nil
     end
 end)
 
--- Reset on character change
+-- Reset when character changes
 player.CharacterAdded:Connect(function()
-    debugPrint("Character reset")
     lockedTarget = nil
     if lockHighlight then
         lockHighlight:Destroy()
         lockHighlight = nil
     end
 end)
-
-debugPrint("Lock system initialized")
