@@ -10,7 +10,7 @@ local lockConnection = nil
 
 -- Configuration
 local LOCK_KEY = Enum.UserInputType.MouseButton2
-local MAX_LOCK_DISTANCE = 150
+local MAX_LOCK_DISTANCE = 10000
 local LOCK_FOV = math.rad(25) -- Tighter 25 degree cone
 local HEAD_OFFSET = Vector3.new(0, 1.5, 0) -- Head position offset
 
