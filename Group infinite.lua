@@ -3,7 +3,7 @@ local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local Teams = game:GetService("Teams")
 
--- Feature toggle states
+-- Feature toggle states with initialization
 local features = {
     aimLock = false,
     teamHighlight = false,
@@ -11,197 +11,158 @@ local features = {
 }
 
 --[[ Feature 1: Aim Lock System ]]--
-local function initializeAimLock()
-    local camera = workspace.CurrentCamera
-    local lockedTarget = nil
+local aimLockSystem = {
+    debugPart = nil,
+    lockedTarget = nil,
+    active = false
+}
 
-    camera.CameraType = Enum.CameraType.Scriptable
+function aimLockSystem:initialize()
+    self.debugPart = Instance.new("Part")
+    self.debugPart.Size = Vector3.new(0.5, 0.5, 0.5)
+    self.debugPart.Shape = Enum.PartType.Ball
+    self.debugPart.Color = Color3.new(1, 0, 0)
+    self.debugPart.Anchored = true
+    self.debugPart.CanCollide = false
+    self.debugPart.Parent = workspace
 
-    local debugPart = Instance.new("Part")
-    debugPart.Size = Vector3.new(0.5, 0.5, 0.5)
-    debugPart.Shape = Enum.PartType.Ball
-    debugPart.Color = Color3.new(1, 0, 0)
-    debugPart.Anchored = true
-    debugPart.CanCollide = false
-    debugPart.Parent = workspace
+    workspace.CurrentCamera.CameraType = Enum.CameraType.Scriptable
+end
 
-    local function isTargetValid(target)
-        return target and target:FindFirstChild("Humanoid") and target.Humanoid.Health > 0
+function aimLockSystem:enable()
+    if not self.debugPart then
+        self:initialize()
     end
+    self.active = true
+    print("Aim Lock: Enabled")
+end
 
-    local function getHeadPosition(target)
-        return target:FindFirstChild("Head") and target.Head.Position
-    end
-
-    local function findTarget()
-        local myHead = Players.LocalPlayer.Character and Players.LocalPlayer.Character:FindFirstChild("Head")
-        if not myHead then return end
-        
-        for _, otherPlayer in ipairs(Players:GetPlayers()) do
-            if otherPlayer ~= Players.LocalPlayer then
-                local char = otherPlayer.Character
-                if not char or not isTargetValid(char) then continue end
-                
-                local head = getHeadPosition(char)
-                debugPart.Position = head or Vector3.new(0, 100, 0)
-                
-                if head then
-                    local direction = (head - camera.CFrame.Position).Unit
-                    if camera.CFrame.LookVector:Dot(direction) > 0.9 then
-                        return char
-                    end
-                end
-            end
-        end
-    end
-
-    UserInputService.InputBegan:Connect(function(input)
-        if features.aimLock and input.UserInputType == Enum.UserInputType.MouseButton2 then
-            lockedTarget = findTarget()
-            
-            if lockedTarget then
-                RunService:BindToRenderStep("AimLock", Enum.RenderPriority.Camera.Value, function()
-                    if not isTargetValid(lockedTarget) then
-                        RunService:UnbindFromRenderStep("AimLock")
-                        lockedTarget = nil
-                        return
-                    end
-                    
-                    local headPos = getHeadPosition(lockedTarget)
-                    if headPos then
-                        camera.CFrame = CFrame.new(camera.CFrame.Position, headPos)
-                    end
-                end)
-            end
-        end
-    end)
-
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton2 then
-            RunService:UnbindFromRenderStep("AimLock")
-            lockedTarget = nil
-        end
-    end)
+function aimLockSystem:disable()
+    self.active = false
+    RunService:UnbindFromRenderStep("AimLock")
+    self.lockedTarget = nil
+    print("Aim Lock: Disabled")
 end
 
 --[[ Feature 2: Team Highlight System ]]--
-local highlightHandler do
-    local highlights = {}
+local highlightSystem = {
+    highlights = {}
+}
 
-    function highlightHandler.enable()
-        local function applyHighlight(character, player)
-            local highlight = Instance.new("Highlight")
-            highlight.Name = "TeamHighlight"
-            highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            highlight.FillTransparency = 1
-            highlight.OutlineColor = player.TeamColor.Color
-            highlight.Parent = character
-            highlights[character] = highlight
+function highlightSystem:enable()
+    local function applyHighlight(character, player)
+        if self.highlights[character] then
+            self.highlights[character]:Destroy()
         end
-
-        local function onCharacterAdded(character, player)
-            if character:WaitForChild("Humanoid") then
-                if highlights[character] then
-                    highlights[character]:Destroy()
-                end
-                applyHighlight(character, player)
-            end
-        end
-
-        local function onPlayerAdded(player)
-            player.CharacterAdded:Connect(function(character)
-                onCharacterAdded(character, player)
-            end)
-            if player.Character then
-                onCharacterAdded(player.Character, player)
-            end
-        end
-
-        for _, player in ipairs(Players:GetPlayers()) do
-            onPlayerAdded(player)
-        end
-        Players.PlayerAdded:Connect(onPlayerAdded)
+        
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "TeamHighlight"
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.FillTransparency = 1
+        highlight.OutlineColor = player.TeamColor.Color
+        highlight.Parent = character
+        self.highlights[character] = highlight
     end
 
-    function highlightHandler.disable()
-        for character, highlight in pairs(highlights) do
-            highlight:Destroy()
+    -- Immediate application to existing players
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Character then
+            applyHighlight(player.Character, player)
         end
-        highlights = {}
+        player.CharacterAdded:Connect(function(character)
+            applyHighlight(character, player)
+        end)
     end
+    
+    Players.PlayerAdded:Connect(function(player)
+        player.CharacterAdded:Connect(function(character)
+            applyHighlight(character, player)
+        end)
+    end)
+    
+    print("Team Highlights: Enabled")
+end
+
+function highlightSystem:disable()
+    for _, highlight in pairs(self.highlights) do
+        highlight:Destroy()
+    end
+    self.highlights = {}
+    print("Team Highlights: Disabled")
 end
 
 --[[ Feature 3: Health Bar System ]]--
-local healthBarHandler do
-    local healthBars = {}
+local healthBarSystem = {
+    healthBars = {}
+}
 
-    function healthBarHandler.enable()
-        local function createHealthBar(character)
-            local humanoid = character:FindFirstChild("Humanoid")
-            local hrp = character:FindFirstChild("HumanoidRootPart")
-            if not humanoid or not hrp then return end
-
-            local healthBar = Instance.new("BillboardGui")
-            healthBar.Name = "PlayerHealthBar"
-            healthBar.Adornee = hrp
-            healthBar.Size = UDim2.new(4, 0, 0.5, 0)
-            healthBar.StudsOffset = Vector3.new(0, 2.5, 0)
-            healthBar.AlwaysOnTop = true
-            healthBar.MaxDistance = 100
-
-            local background = Instance.new("Frame")
-            background.BackgroundColor3 = Color3.new(0.1, 0.1, 0.1)
-            background.BackgroundTransparency = 0.3
-            background.Size = UDim2.new(1, 0, 1, 0)
-
-            local fill = Instance.new("Frame")
-            fill.BackgroundColor3 = Color3.new(1, 0, 0)
-            fill.Size = UDim2.new(humanoid.Health / humanoid.MaxHealth, 0, 1, 0)
-            fill.AnchorPoint = Vector2.new(0, 0.5)
-            fill.Position = UDim2.new(0, 0, 0.5, 0)
-            fill.ZIndex = 2
-
-            fill.Parent = background
-            background.Parent = healthBar
-            healthBar.Parent = character
-            healthBars[character] = healthBar
-
-            humanoid.HealthChanged:Connect(function(currentHealth)
-                fill.Size = UDim2.new(currentHealth / humanoid.MaxHealth, 0, 1, 0)
-            end)
+function healthBarSystem:enable()
+    local function createHealthBar(character)
+        if self.healthBars[character] then
+            self.healthBars[character]:Destroy()
         end
 
-        local function onCharacterAdded(character)
-            if healthBars[character] then
-                healthBars[character]:Destroy()
-            end
-            if character:WaitForChild("Humanoid") then
-                createHealthBar(character)
-            end
-        end
+        local humanoid = character:WaitForChild("Humanoid")
+        local hrp = character:WaitForChild("HumanoidRootPart")
 
-        local function onPlayerAdded(player)
-            player.CharacterAdded:Connect(onCharacterAdded)
-            if player.Character then
-                onCharacterAdded(player.Character)
-            end
-        end
+        local healthBar = Instance.new("BillboardGui")
+        healthBar.Name = "PlayerHealthBar"
+        healthBar.Adornee = hrp
+        healthBar.Size = UDim2.new(4, 0, 0.5, 0)
+        healthBar.StudsOffset = Vector3.new(0, 2.5, 0)
+        healthBar.AlwaysOnTop = true
+        healthBar.MaxDistance = 100
 
-        Players.PlayerAdded:Connect(onPlayerAdded)
-        for _, player in ipairs(Players:GetPlayers()) do
-            onPlayerAdded(player)
-        end
+        local background = Instance.new("Frame")
+        background.BackgroundColor3 = Color3.new(0.1, 0.1, 0.1)
+        background.BackgroundTransparency = 0.3
+        background.Size = UDim2.new(1, 0, 1, 0)
+
+        local fill = Instance.new("Frame")
+        fill.BackgroundColor3 = Color3.new(1, 0, 0)
+        fill.Size = UDim2.new(humanoid.Health / humanoid.MaxHealth, 0, 1, 0)
+        fill.AnchorPoint = Vector2.new(0, 0.5)
+        fill.Position = UDim2.new(0, 0, 0.5, 0)
+        fill.ZIndex = 2
+
+        fill.Parent = background
+        background.Parent = healthBar
+        healthBar.Parent = character
+        self.healthBars[character] = healthBar
+
+        humanoid.HealthChanged:Connect(function(currentHealth)
+            fill.Size = UDim2.new(currentHealth / humanoid.MaxHealth, 0, 1, 0)
+        end)
     end
 
-    function healthBarHandler.disable()
-        for character, healthBar in pairs(healthBars) do
-            healthBar:Destroy()
+    -- Immediate application to existing players
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Character then
+            createHealthBar(player.Character)
         end
-        healthBars = {}
+        player.CharacterAdded:Connect(function(character)
+            createHealthBar(character)
+        end)
     end
+    
+    Players.PlayerAdded:Connect(function(player)
+        player.CharacterAdded:Connect(function(character)
+            createHealthBar(character)
+        end)
+    end)
+    
+    print("Health Bars: Enabled")
 end
 
--- Toggle System
+function healthBarSystem:disable()
+    for _, healthBar in pairs(self.healthBars) do
+        healthBar:Destroy()
+    end
+    self.healthBars = {}
+    print("Health Bars: Disabled")
+end
+
+-- Input Handling with Debug Prints
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     
@@ -209,26 +170,88 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         local keyNumber = tonumber(string.match(tostring(input.KeyCode), "F(%d+)"))
         if not keyNumber or keyNumber < 1 or keyNumber > 3 then return end
 
-        -- Toggle features
+        -- Toggle features with immediate visual feedback
         if keyNumber == 1 then
             features.aimLock = not features.aimLock
             if features.aimLock then
-                initializeAimLock()
+                aimLockSystem:enable()
+                
+                -- MouseButton2 connection for active system
+                UserInputService.InputBegan:Connect(function(input)
+                    if input.UserInputType == Enum.UserInputType.MouseButton2 and aimLockSystem.active then
+                        aimLockSystem.lockedTarget = findTarget()
+                        
+                        if aimLockSystem.lockedTarget then
+                            RunService:BindToRenderStep("AimLock", Enum.RenderPriority.Camera.Value, function()
+                                if not isTargetValid(aimLockSystem.lockedTarget) then
+                                    RunService:UnbindFromRenderStep("AimLock")
+                                    aimLockSystem.lockedTarget = nil
+                                    return
+                                end
+                                
+                                local headPos = getHeadPosition(aimLockSystem.lockedTarget)
+                                if headPos then
+                                    workspace.CurrentCamera.CFrame = CFrame.new(
+                                        workspace.CurrentCamera.CFrame.Position,
+                                        headPos
+                                    )
+                                end
+                            end)
+                        end
+                    end
+                end)
+            else
+                aimLockSystem:disable()
             end
+            
         elseif keyNumber == 2 then
             features.teamHighlight = not features.teamHighlight
             if features.teamHighlight then
-                highlightHandler.enable()
+                highlightSystem:enable()
             else
-                highlightHandler.disable()
+                highlightSystem:disable()
             end
+            
         elseif keyNumber == 3 then
             features.healthBars = not features.healthBars
             if features.healthBars then
-                healthBarHandler.enable()
+                healthBarSystem:enable()
             else
-                healthBarHandler.disable()
+                healthBarSystem:disable()
             end
         end
     end
 end)
+
+-- Helper functions for Aim Lock
+local function isTargetValid(target)
+    return target and target:FindFirstChild("Humanoid") and target.Humanoid.Health > 0
+end
+
+local function getHeadPosition(target)
+    return target:FindFirstChild("Head") and target.Head.Position
+end
+
+local function findTarget()
+    local myHead = Players.LocalPlayer.Character and Players.LocalPlayer.Character:FindFirstChild("Head")
+    if not myHead then return end
+    
+    for _, otherPlayer in ipairs(Players:GetPlayers()) do
+        if otherPlayer ~= Players.LocalPlayer then
+            local char = otherPlayer.Character
+            if not char or not isTargetValid(char) then continue end
+            
+            local head = getHeadPosition(char)
+            if aimLockSystem.debugPart then
+                aimLockSystem.debugPart.Position = head or Vector3.new(0, 100, 0)
+            end
+            
+            if head then
+                local direction = (head - workspace.CurrentCamera.CFrame.Position).Unit
+                if workspace.CurrentCamera.CFrame.LookVector:Dot(direction) > 0.9 then
+                    return char
+                end
+            end
+        end
+    end
+end
