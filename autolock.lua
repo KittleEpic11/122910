@@ -8,15 +8,15 @@ local mouse = player:GetMouse()
 local camera = workspace.CurrentCamera
 
 local lockedTarget = nil
-local maxLockDistance = 100 -- Increased from 50
+local maxLockDistance = 1000
 local lockHighlight = nil
 local connection = nil
 
 -- Debug print function
 local function debugPrint(message)
     print("[LockSystem] " .. message)
-    -- Uncomment next line to show on screen
-    -- game.StarterGui:SetCore("ChatMakeSystemMessage", {Text = "[LockSystem] "..message})
+    
+ game.StarterGui:SetCore("ChatMakeSystemMessage", {Text = "[LockSystem] "..message})
 end
 
 local function findNearestEnemy()
